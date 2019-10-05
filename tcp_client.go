@@ -2,8 +2,6 @@ package socks5
 
 import (
 	"net"
-	"strconv"
-	"strings"
 )
 
 type TcpClient struct {
@@ -36,75 +34,47 @@ func (c *TcpClient) GetConn() *net.TCPConn {
 }
 
 func (c *TcpClient) Auth(method int) error {
-	err := write_all(c.conn, []byte{VERSION, 0x01, byte(method)})
+	request := NewAuthRequest([]uint8{uint8(method)})
+	err := request.Write(c.conn)
 	if err != nil {
 		return err
 	}
 
-	var buf [2]byte
-	err = read_all(c.conn, buf[:])
+	var reply AuthReply
+	err = reply.Read(c.conn)
 	if err != nil {
 		return err
 	}
 
-	if buf[0] != VERSION {
+	if reply.Ver != VERSION {
 		return ErrSocksVersionNotSupport
 	}
 
-	if buf[1] == METHOD_NO_ACCEPTABLE {
+	if reply.Method == METHOD_NO_ACCEPTABLE {
 		return ErrNotSupportClientMethod
 	}
 
 	return nil
 }
 
-func (c *TcpClient) Connect(remote_addr string) error {
-	s := strings.Split(remote_addr, ":")
-	if len(s) < 2 {
-		return ErrAddrFormatInvalid
-	}
-
-	ip := net.ParseIP(s[0])
-	port, err := strconv.Atoi(s[1])
-	if err != nil {
-		return err
-	}
-	var addr_type int
-	var addr []byte
-	if ip != nil {
-		if ip.To4() != nil {
-			addr_type = CMD_ADDR_IPV4
-			addr = []byte(ip.To4().String())
-		} else {
-			addr_type = CMD_ADDR_IPV6
-			addr = []byte(ip.To16().String())
-		}
-	} else {
-		addr_type = CMD_ADDR_DOMAIN
-		addr = []byte{byte(len(s[0]))}
-		addr = append(addr, []byte(s[0])...)
-	}
-
-	var data = []byte{VERSION, CMD_CONNECT, 0x01, byte(addr_type)}
-	data = append(data, addr...)
-	data = append(data, byte(port>>8&0xff))
-	data = append(data, byte(port&0xff))
-	err = write_all(c.conn, data)
+func (c *TcpClient) Connect(remote_host string, remote_port uint16) error {
+	conn_cmd := NewConncectCmd(CMD_CONNECT, remote_host, remote_port)
+	err := conn_cmd.Write(c.conn)
 	if err != nil {
 		return err
 	}
 
-	var buf [4]byte
-	err = read_all(c.conn, buf[:])
+	var conn_reply ConnectReply
+	err = conn_reply.Read(c.conn)
 	if err != nil {
 		return err
 	}
 
-	if buf[0] != VERSION {
+	if conn_reply.Ver != VERSION {
 		return ErrSocksVersionNotSupport
 	}
 
-	switch buf[1] {
+	switch conn_reply.Reply {
 	case REPLY_SOCKS_SERVER_FAILURE:
 		return ErrSocksServerFailure
 	case REPLY_CONNECTION_NOT_ALLOW:
@@ -121,10 +91,6 @@ func (c *TcpClient) Connect(remote_addr string) error {
 		return ErrCommandNotSupported
 	case REPLY_ADDRESS_TYPE_NOT_SUPPORTED:
 		return ErrAddressTypeNotSupported
-	}
-
-	if buf[3] == CMD_ADDR_DOMAIN {
-	} else if buf[3] == CMD_ADDR_IPV6 {
 	}
 
 	return nil
