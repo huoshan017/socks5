@@ -17,8 +17,7 @@ const (
 
 	CMD_CONNECT       = 0x01
 	CMD_BIND          = 0x02
-	CMD_DOMAIN        = 0x03
-	CMD_UDP_ASSOCIATE = 0x04
+	CMD_UDP_ASSOCIATE = 0x03
 
 	CMD_RESERVED = 0x00
 
@@ -35,7 +34,6 @@ const (
 	REPLY_TTL_EXPIRED                = 0x06
 	REPLY_COMMAND_NOT_SUPPORTED      = 0x07
 	REPLY_ADDRESS_TYPE_NOT_SUPPORTED = 0x08
-	REPLY_UNASSIGNED                 = 0x09
 )
 
 type AuthRequest struct {
@@ -102,24 +100,24 @@ type ConnectCmd struct {
 	Ver      uint8
 	Cmd      uint8
 	AddrType uint8
-	Addr     []byte
+	Addr     string
 	Port     uint16
 }
 
-func _parse_host(host string) (addr_type int, addr []byte) {
+func _parse_host(host string) (addr_type int, addr string) {
 	ip := net.ParseIP(host)
 	if ip != nil {
 		ipv4 := ip.To4()
 		if ipv4 != nil {
 			addr_type = CMD_ADDR_IPV4
-			addr = []byte(ipv4.String())
+			addr = ipv4.String()
 		} else {
 			addr_type = CMD_ADDR_IPV6
-			addr = []byte(ip.To16().String())
+			addr = ip.To16().String()
 		}
 	} else {
 		addr_type = CMD_ADDR_DOMAIN
-		addr = []byte(host)
+		addr = host
 	}
 	return
 }
@@ -165,7 +163,7 @@ func (c *ConnectCmd) Read(conn net.Conn) error {
 		if err != nil {
 			return err
 		}
-		c.Addr = net.IP(ip_port[:net.IPv4len])
+		c.Addr = net.IP(ip_port[:net.IPv4len]).String()
 		c.Port = uint16((ip_port[net.IPv4len]<<8)&0xff) | uint16(ip_port[net.IPv4len+1]&0xff)
 	} else if c.AddrType == CMD_ADDR_IPV6 {
 		var ip_port [net.IPv6len + 2]byte
@@ -173,7 +171,7 @@ func (c *ConnectCmd) Read(conn net.Conn) error {
 		if err != nil {
 			return err
 		}
-		c.Addr = net.IP(ip_port[:net.IPv6len])
+		c.Addr = net.IP(ip_port[:net.IPv6len]).String()
 		c.Port = uint16((ip_port[net.IPv6len]<<8)&0xff) | uint16(ip_port[net.IPv6len+1]&0xff)
 	} else {
 		_, err = io.ReadFull(conn, buf[:1])
@@ -185,7 +183,7 @@ func (c *ConnectCmd) Read(conn net.Conn) error {
 		if err != nil {
 			return err
 		}
-		c.Addr = ip_port[:int(buf[0])]
+		c.Addr = string(ip_port[:int(buf[0])])
 		c.Port = uint16((ip_port[buf[0]]<<8)&0xff) | uint16(ip_port[buf[0]+1]&0xff)
 	}
 	return nil
@@ -199,8 +197,8 @@ type ConnectReply struct {
 	BindPort uint16
 }
 
-func NewConnectReply(reply int, addr_type int, bind_addr string, bind_port uint16) *ConnectReply {
-	return &ConnectReply{Ver: VERSION, Reply: uint8(reply), AddrType: uint8(addr_type), BindAddr: bind_addr, BindPort: bind_port}
+func NewConnectReply(reply uint8, addr_type uint8, bind_addr string, bind_port uint16) *ConnectReply {
+	return &ConnectReply{Ver: VERSION, Reply: reply, AddrType: addr_type, BindAddr: bind_addr, BindPort: bind_port}
 }
 
 func (c *ConnectReply) Write(conn net.Conn) error {
