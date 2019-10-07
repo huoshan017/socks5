@@ -1,6 +1,7 @@
 package socks5
 
 import (
+	"encoding/binary"
 	"io"
 	"net"
 )
@@ -86,7 +87,7 @@ func (a *AuthReply) Write(conn net.Conn) error {
 }
 
 func (a *AuthReply) Read(conn net.Conn) error {
-	var buf []byte
+	var buf [2]byte
 	_, err := io.ReadFull(conn, buf[:])
 	if err != nil {
 		return err
@@ -164,7 +165,7 @@ func (c *ConnectCmd) Read(conn net.Conn) error {
 			return err
 		}
 		c.Addr = net.IP(ip_port[:net.IPv4len]).String()
-		c.Port = uint16((ip_port[net.IPv4len]<<8)&0xff) | uint16(ip_port[net.IPv4len+1]&0xff)
+		c.Port = binary.BigEndian.Uint16(ip_port[net.IPv4len : net.IPv4len+2]) //uint16((ip_port[net.IPv4len]<<8)&0xff00) | uint16(ip_port[net.IPv4len+1]&0xff)
 	} else if c.AddrType == CMD_ADDR_IPV6 {
 		var ip_port [net.IPv6len + 2]byte
 		_, err = io.ReadFull(conn, ip_port[:])
@@ -172,19 +173,20 @@ func (c *ConnectCmd) Read(conn net.Conn) error {
 			return err
 		}
 		c.Addr = net.IP(ip_port[:net.IPv6len]).String()
-		c.Port = uint16((ip_port[net.IPv6len]<<8)&0xff) | uint16(ip_port[net.IPv6len+1]&0xff)
+		c.Port = binary.BigEndian.Uint16(ip_port[net.IPv6len : net.IPv6len+2]) //uint16((ip_port[net.IPv6len]<<8)&0xff00) | uint16(ip_port[net.IPv6len+1]&0xff)
 	} else {
 		_, err = io.ReadFull(conn, buf[:1])
 		if err != nil {
 			return err
 		}
-		ip_port := make([]byte, int(buf[0])+2)
+		ip_len := buf[0]
+		ip_port := make([]byte, ip_len+2)
 		_, err = io.ReadFull(conn, ip_port)
 		if err != nil {
 			return err
 		}
-		c.Addr = string(ip_port[:int(buf[0])])
-		c.Port = uint16((ip_port[buf[0]]<<8)&0xff) | uint16(ip_port[buf[0]+1]&0xff)
+		c.Addr = string(ip_port[:ip_len])
+		c.Port = binary.BigEndian.Uint16(ip_port[ip_len : ip_len+2]) //uint16((ip_port[ip_len]<<8)&0xff00) | uint16(ip_port[ip_len+1]&0xff)
 	}
 	return nil
 }
@@ -211,10 +213,11 @@ func (c *ConnectReply) Write(conn net.Conn) error {
 			buf = append(buf, byte(len(addr)))
 			buf = append(buf, addr...)
 		}
+		buf = append(buf, []byte{byte((c.BindPort >> 8) & 0xff), byte(c.BindPort & 0xff)}...)
 	} else {
-		buf = append(buf, []byte{0x00, 0x00, 0x00, 0x00}...)
+		buf = append(buf, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}...)
 	}
-	buf = append(buf, []byte{byte((c.BindPort >> 8) & 0xff), byte(c.BindPort & 0xff)}...)
+
 	_, err := conn.Write(buf)
 	if err != nil {
 		return err

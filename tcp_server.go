@@ -1,6 +1,7 @@
 package socks5
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net"
@@ -24,14 +25,14 @@ func NewTcpServer() *TcpServer {
 func (t *TcpServer) Start(listen_addr string) error {
 	tcp_addr, err := net.ResolveTCPAddr("tcp", listen_addr)
 	if err != nil {
-		fmt.Errorf("%v", err.Error())
+		fmt.Fprintln(os.Stdout, err.Error())
 		return err
 	}
 
 	var listener *net.TCPListener
 	listener, err = net.ListenTCP("tcp", tcp_addr)
 	if err != nil {
-		fmt.Errorf("%v", err.Error())
+		fmt.Fprintln(os.Stdout, err.Error())
 		return err
 	}
 
@@ -41,11 +42,12 @@ func (t *TcpServer) Start(listen_addr string) error {
 	for {
 		c, err = t.listener.AcceptTCP()
 		if err != nil {
-			fmt.Errorf("%v", err.Error())
+			fmt.Fprintln(os.Stdout, err.Error())
 			return err
 		}
 
 		go t.serve(c)
+		fmt.Fprintln(os.Stdout, "new connection from client: ", c.RemoteAddr(), "->", c.LocalAddr())
 	}
 
 	return nil
@@ -56,7 +58,7 @@ func (t *TcpServer) serve(conn *net.TCPConn) {
 	err := auth_req.Read(conn)
 	if err != nil {
 		conn.Close()
-		fmt.Errorf("%v", err.Error())
+		fmt.Fprintln(os.Stdout, err.Error())
 		return
 	}
 
@@ -64,7 +66,7 @@ func (t *TcpServer) serve(conn *net.TCPConn) {
 	err = auth_reply.Write(conn)
 	if err != nil {
 		conn.Close()
-		fmt.Errorf("%v", err.Error())
+		fmt.Fprintln(os.Stdout, err.Error())
 		return
 	}
 
@@ -72,17 +74,18 @@ func (t *TcpServer) serve(conn *net.TCPConn) {
 	err = conn_cmd.Read(conn)
 	if err != nil {
 		conn.Close()
-		fmt.Errorf("%v", err.Error())
+		fmt.Fprintln(os.Stdout, err.Error())
 		return
 	}
 
+	remote_addr := fmt.Sprintf("%v:%v", conn_cmd.Addr, conn_cmd.Port)
 	var remote_conn net.Conn
 	var reply_res uint8
 	if conn_cmd.Cmd != CMD_CONNECT {
 		reply_res = REPLY_COMMAND_NOT_SUPPORTED
 	} else {
 		for {
-			remote_conn, err = net.Dial("tcp", fmt.Sprintf("%v:%v", conn_cmd.Addr, conn_cmd.Port))
+			remote_conn, err = net.Dial("tcp", remote_addr)
 			if err != nil {
 				if net_err, ok := err.(net.Error); ok {
 					if net_err.Temporary() {
@@ -90,8 +93,10 @@ func (t *TcpServer) serve(conn *net.TCPConn) {
 						continue
 					}
 					reply_res = _get_reply_error_code(net_err)
+				} else {
+					reply_res = REPLY_SOCKS_SERVER_FAILURE
 				}
-				fmt.Errorf("%v", err.Error())
+				fmt.Fprintln(os.Stdout, err.Error())
 			} else {
 				reply_res = REPLY_SUCCEED
 			}
@@ -103,52 +108,62 @@ func (t *TcpServer) serve(conn *net.TCPConn) {
 	err = conn_reply.Write(conn)
 	if err != nil {
 		conn.Close()
-		fmt.Errorf("%v", err.Error())
+		fmt.Fprintln(os.Stdout, "%v", err.Error())
 		return
 	}
 
 	if reply_res != REPLY_SUCCEED {
 		conn.Close()
-		fmt.Errorf("connect remote host reply failed: %v, close connection to sock client", reply_res)
+		fmt.Fprintln(os.Stdout, "connect remote host reply failed", reply_res, ", close connection to sock client")
 		return
 	}
 
+	fmt.Fprintln(os.Stdout, "connect remote host", remote_addr, "success")
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
 	// read from socks client and write to remote server
-	var local_buf [1024]byte
-	for {
-		read_bytes, e := io.ReadFull(conn, local_buf[:])
-		if e != nil {
-			fmt.Errorf("read from socks client err: %v", e.Error())
-			break
+	go func(ctx context.Context) {
+		var local_buf [1024]byte
+		//conn.SetReadDeadline(time.Now().Add(time.Millisecond * 1000))
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			default:
+			}
+			read_bytes, e := io.ReadFull(conn, local_buf[:])
+			if e != nil {
+				fmt.Fprintln(os.Stdout, "read from socks client err: ", e.Error())
+				break
+			}
+			_, e = remote_conn.Write(local_buf[:read_bytes])
+			if e != nil {
+				fmt.Fprintln(os.Stdout, "write to remote server err: ", e.Error())
+				break
+			}
 		}
-		_, e = remote_conn.Write(local_buf[:read_bytes])
-		if e != nil {
-			fmt.Errorf("write to remote server err: %v", e.Error())
-			break
-		}
-	}
+	}(ctx)
 
 	// read from remote server and write to socks client
 	var remote_buf [4096]byte
+	//remote_conn.SetReadDeadline(time.Now().Add(time.Millisecond * 2000))
 	for {
 		read_bytes, e := io.ReadFull(remote_conn, remote_buf[:])
 		if e != nil {
-			fmt.Errorf("read from remote server err: %v", e.Error())
+			fmt.Fprintln(os.Stdout, "read from remote server err: ", e.Error())
 			break
 		}
 		_, e = conn.Write(remote_buf[:read_bytes])
 		if e != nil {
-			fmt.Errorf("write to socks client err: %v", e.Error())
+			fmt.Fprintln(os.Stdout, "write to socks client err: ", e.Error())
 			break
 		}
 	}
 }
 
 func _get_reply_error_code(net_err net.Error) uint8 {
-	if net_err.Timeout() {
-		return REPLY_TTL_EXPIRED
-	}
-
 	var reply uint8 = REPLY_SOCKS_SERVER_FAILURE
 	op_err, ok := net_err.(*net.OpError)
 	if !ok {
@@ -159,7 +174,9 @@ func _get_reply_error_code(net_err net.Error) uint8 {
 	case *net.AddrError:
 		reply = REPLY_ADDRESS_TYPE_NOT_SUPPORTED
 	case *os.SyscallError:
-		if errno, o := t.Err.(syscall.Errno); o {
+		errno, o := t.Err.(syscall.Errno)
+		if o {
+			fmt.Fprintln(os.Stdout, "syscall errno: ", errno)
 			switch errno {
 			case syscall.ECONNREFUSED:
 				reply = REPLY_CONNECTION_REFUSED
@@ -169,6 +186,8 @@ func _get_reply_error_code(net_err net.Error) uint8 {
 				reply = REPLY_HOST_UNREACHABLE
 			case syscall.ENOTCONN:
 				reply = REPLY_CONNECTION_NOT_ALLOW
+			case syscall.ETIMEDOUT:
+				reply = REPLY_TTL_EXPIRED
 			}
 		}
 	}
