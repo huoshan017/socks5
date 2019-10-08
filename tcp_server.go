@@ -3,7 +3,6 @@ package socks5
 import (
 	"context"
 	"fmt"
-	"io"
 	"net"
 	"os"
 	"syscall"
@@ -104,7 +103,7 @@ func (t *TcpServer) serve(conn *net.TCPConn) {
 		}
 	}
 
-	conn_reply := NewConnectReply(reply_res, conn_cmd.AddrType, "", 0)
+	conn_reply := NewConnectReply(reply_res, conn_cmd.AddrType, conn_cmd.Addr, 0)
 	err = conn_reply.Write(conn)
 	if err != nil {
 		conn.Close()
@@ -133,7 +132,7 @@ func (t *TcpServer) serve(conn *net.TCPConn) {
 				return
 			default:
 			}
-			read_bytes, e := io.ReadFull(conn, local_buf[:])
+			read_bytes, e := conn.Read(local_buf[:])
 			if e != nil {
 				fmt.Fprintln(os.Stdout, "read from socks client err: ", e.Error())
 				break
@@ -150,7 +149,7 @@ func (t *TcpServer) serve(conn *net.TCPConn) {
 	var remote_buf [4096]byte
 	//remote_conn.SetReadDeadline(time.Now().Add(time.Millisecond * 2000))
 	for {
-		read_bytes, e := io.ReadFull(remote_conn, remote_buf[:])
+		read_bytes, e := remote_conn.Read(remote_buf[:])
 		if e != nil {
 			fmt.Fprintln(os.Stdout, "read from remote server err: ", e.Error())
 			break
@@ -164,6 +163,10 @@ func (t *TcpServer) serve(conn *net.TCPConn) {
 }
 
 func _get_reply_error_code(net_err net.Error) uint8 {
+	if net_err.Timeout() {
+		return REPLY_TTL_EXPIRED
+	}
+
 	var reply uint8 = REPLY_SOCKS_SERVER_FAILURE
 	op_err, ok := net_err.(*net.OpError)
 	if !ok {

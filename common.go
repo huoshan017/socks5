@@ -2,8 +2,10 @@ package socks5
 
 import (
 	"encoding/binary"
+	"fmt"
 	"io"
 	"net"
+	"os"
 )
 
 const (
@@ -217,6 +219,8 @@ func (c *ConnectReply) Write(conn net.Conn) error {
 	} else {
 		buf = append(buf, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}...)
 	}
+
+	fmt.Fprintln(os.Stdout, "ConnectReply Write buf:", buf)
 
 	_, err := conn.Write(buf)
 	if err != nil {
