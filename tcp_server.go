@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"syscall"
 	"time"
 )
 
@@ -46,14 +45,14 @@ func (t *TcpServer) Start(listen_addr string) error {
 			return err
 		}
 
-		go t.serve(c)
+		go serve(c)
 		fmt.Fprintln(os.Stdout, "new connection from client: ", c.RemoteAddr(), "->", c.LocalAddr())
 	}
 
 	return nil
 }
 
-func (t *TcpServer) serve(conn *net.TCPConn) {
+func serve(conn *net.TCPConn) {
 	var auth_req AuthRequest
 	err := auth_req.Read(conn)
 	if err != nil {
@@ -92,7 +91,7 @@ func (t *TcpServer) serve(conn *net.TCPConn) {
 						time.Sleep(time.Second)
 						continue
 					}
-					reply_res = _get_reply_error_code(net_err)
+					reply_res = get_reply_error_code(net_err)
 				} else {
 					reply_res = REPLY_SOCKS_SERVER_FAILURE
 				}
@@ -124,7 +123,16 @@ func (t *TcpServer) serve(conn *net.TCPConn) {
 	defer cancel()
 
 	// read from socks client and write to remote server
-	go func(ctx context.Context) {
+	go read_and_write(ctx, conn, remote_conn, 5000, 0, 1024)
+
+	// read from remote server and write to socks client
+	read_and_write(ctx, remote_conn, conn, 5000, 0, 4096)
+
+	conn.Close()
+	remote_conn.Close()
+
+	// read from socks client and write to remote server
+	/*go func(ctx context.Context) {
 		var local_buf [1024]byte
 		//conn.SetReadDeadline(time.Now().Add(time.Millisecond * 1000))
 		for {
@@ -168,40 +176,36 @@ func (t *TcpServer) serve(conn *net.TCPConn) {
 			}
 			break
 		}
-	}
+	}*/
 }
 
-func _get_reply_error_code(net_err net.Error) uint8 {
-	if net_err.Timeout() {
-		return REPLY_TTL_EXPIRED
-	}
-
-	var reply uint8 = REPLY_SOCKS_SERVER_FAILURE
-	op_err, ok := net_err.(*net.OpError)
-	if !ok {
-		return reply
-	}
-
-	switch t := op_err.Err.(type) {
-	case *net.AddrError:
-		reply = REPLY_ADDRESS_TYPE_NOT_SUPPORTED
-	case *os.SyscallError:
-		errno, o := t.Err.(syscall.Errno)
-		if o {
-			fmt.Fprintln(os.Stdout, "syscall errno: ", errno)
-			switch errno {
-			case syscall.ECONNREFUSED:
-				reply = REPLY_CONNECTION_REFUSED
-			case syscall.ENETUNREACH:
-				reply = REPLY_NETWORK_UNREACHABLE
-			case syscall.EHOSTUNREACH:
-				reply = REPLY_HOST_UNREACHABLE
-			case syscall.ENOTCONN:
-				reply = REPLY_CONNECTION_NOT_ALLOW
-			case syscall.ETIMEDOUT:
-				reply = REPLY_TTL_EXPIRED
+func read_and_write(ctx context.Context, read_conn, write_conn net.Conn, read_deadline, write_deadline int, buf_len int) {
+	buf := make([]byte, buf_len)
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+		if read_deadline > 0 {
+			read_conn.SetReadDeadline(time.Now().Add(time.Millisecond * time.Duration(read_deadline)))
+		}
+		if write_deadline > 0 {
+			write_conn.SetWriteDeadline(time.Now().Add(time.Millisecond * time.Duration(write_deadline)))
+		}
+		read_bytes, e := read_conn.Read(buf[:])
+		if e != nil {
+			if e != io.EOF {
+				fmt.Fprintln(os.Stdout, "read from socks client err: ", e.Error())
 			}
+			break
+		}
+		_, e = write_conn.Write(buf[:read_bytes])
+		if e != nil {
+			if e != io.EOF {
+				fmt.Fprintln(os.Stdout, "write to remote server err: ", e.Error())
+			}
+			break
 		}
 	}
-	return reply
 }
