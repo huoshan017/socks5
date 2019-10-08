@@ -3,6 +3,7 @@ package socks5
 import (
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"syscall"
@@ -134,12 +135,16 @@ func (t *TcpServer) serve(conn *net.TCPConn) {
 			}
 			read_bytes, e := conn.Read(local_buf[:])
 			if e != nil {
-				fmt.Fprintln(os.Stdout, "read from socks client err: ", e.Error())
+				if e != io.EOF {
+					fmt.Fprintln(os.Stdout, "read from socks client err: ", e.Error())
+				}
 				break
 			}
 			_, e = remote_conn.Write(local_buf[:read_bytes])
 			if e != nil {
-				fmt.Fprintln(os.Stdout, "write to remote server err: ", e.Error())
+				if e != io.EOF {
+					fmt.Fprintln(os.Stdout, "write to remote server err: ", e.Error())
+				}
 				break
 			}
 		}
@@ -151,12 +156,16 @@ func (t *TcpServer) serve(conn *net.TCPConn) {
 	for {
 		read_bytes, e := remote_conn.Read(remote_buf[:])
 		if e != nil {
-			fmt.Fprintln(os.Stdout, "read from remote server err: ", e.Error())
+			if e != io.EOF {
+				fmt.Fprintln(os.Stdout, "read from remote server err: ", e.Error())
+			}
 			break
 		}
 		_, e = conn.Write(remote_buf[:read_bytes])
 		if e != nil {
-			fmt.Fprintln(os.Stdout, "write to socks client err: ", e.Error())
+			if e != io.EOF {
+				fmt.Fprintln(os.Stdout, "write to socks client err: ", e.Error())
+			}
 			break
 		}
 	}

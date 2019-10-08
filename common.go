@@ -2,10 +2,10 @@ package socks5
 
 import (
 	"encoding/binary"
-	"fmt"
+	//"fmt"
 	"io"
 	"net"
-	"os"
+	//"os"
 )
 
 const (
@@ -206,9 +206,10 @@ func NewConnectReply(reply uint8, addr_type uint8, bind_addr string, bind_port u
 }
 
 func (c *ConnectReply) Write(conn net.Conn) error {
-	var buf = []byte{c.Ver, c.Reply, 0x00, c.AddrType}
+	var buf = []byte{c.Ver, c.Reply, 0x00}
 	if c.BindAddr != "" {
 		addr_type, addr := _parse_host(c.BindAddr)
+		buf = append(buf, byte(addr_type))
 		if addr_type == CMD_ADDR_IPV4 || addr_type == CMD_ADDR_IPV6 {
 			buf = append(buf, addr...)
 		} else {
@@ -217,10 +218,10 @@ func (c *ConnectReply) Write(conn net.Conn) error {
 		}
 		buf = append(buf, []byte{byte((c.BindPort >> 8) & 0xff), byte(c.BindPort & 0xff)}...)
 	} else {
-		buf = append(buf, []byte{0x00, 0x00, 0x00, 0x00, 0x00, 0x00}...)
+		buf = append(buf, []byte{CMD_ADDR_IPV4, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}...)
 	}
 
-	fmt.Fprintln(os.Stdout, "ConnectReply Write buf:", buf)
+	//fmt.Fprintln(os.Stdout, "ConnectReply Write buf:", buf)
 
 	_, err := conn.Write(buf)
 	if err != nil {
