@@ -122,64 +122,30 @@ func serve(conn *net.TCPConn) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	l := 2
+	c := make(chan struct{}, l)
+
 	// read from socks client and write to remote server
-	go read_and_write(ctx, conn, remote_conn, 5000, 0, 1024)
+	go read_write_loop(ctx, conn, remote_conn, 5000, 0, 1024, c)
 
 	// read from remote server and write to socks client
-	read_and_write(ctx, remote_conn, conn, 5000, 0, 4096)
+	go read_write_loop(ctx, remote_conn, conn, 5000, 0, 4096, c)
+
+	for i := 0; i < l; i++ {
+		<-c
+	}
+
+	close(c)
 
 	conn.Close()
 	remote_conn.Close()
-
-	// read from socks client and write to remote server
-	/*go func(ctx context.Context) {
-		var local_buf [1024]byte
-		//conn.SetReadDeadline(time.Now().Add(time.Millisecond * 1000))
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			default:
-			}
-			read_bytes, e := conn.Read(local_buf[:])
-			if e != nil {
-				if e != io.EOF {
-					fmt.Fprintln(os.Stdout, "read from socks client err: ", e.Error())
-				}
-				break
-			}
-			_, e = remote_conn.Write(local_buf[:read_bytes])
-			if e != nil {
-				if e != io.EOF {
-					fmt.Fprintln(os.Stdout, "write to remote server err: ", e.Error())
-				}
-				break
-			}
-		}
-	}(ctx)
-
-	// read from remote server and write to socks client
-	var remote_buf [4096]byte
-	//remote_conn.SetReadDeadline(time.Now().Add(time.Millisecond * 2000))
-	for {
-		read_bytes, e := remote_conn.Read(remote_buf[:])
-		if e != nil {
-			if e != io.EOF {
-				fmt.Fprintln(os.Stdout, "read from remote server err: ", e.Error())
-			}
-			break
-		}
-		_, e = conn.Write(remote_buf[:read_bytes])
-		if e != nil {
-			if e != io.EOF {
-				fmt.Fprintln(os.Stdout, "write to socks client err: ", e.Error())
-			}
-			break
-		}
-	}*/
 }
 
-func read_and_write(ctx context.Context, read_conn, write_conn net.Conn, read_deadline, write_deadline int, buf_len int) {
+func read_write_loop(ctx context.Context, read_conn, write_conn net.Conn, read_deadline, write_deadline int, buf_len int, c chan struct{}) {
+	defer func() {
+		c <- struct{}{}
+	}()
+
 	buf := make([]byte, buf_len)
 	for {
 		select {
