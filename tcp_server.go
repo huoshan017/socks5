@@ -158,7 +158,7 @@ func (t *TcpServer) serve(conn *net.TCPConn) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	l := 2
+	var l = 2
 	c := make(chan struct{}, l)
 
 	// read from socks client and write to remote server
