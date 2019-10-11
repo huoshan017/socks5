@@ -10,10 +10,10 @@ import (
 )
 
 const (
-	DefaultSocksReadDeadline   = 2000
-	DefaultSocksWriteDeadline  = 0
-	DefaultRemoteReadDeadline  = 5000
-	DefaultRemoteWriteDeadline = 0
+	DefaultSocksReadDeadline   = 2000 // milliseconds
+	DefaultSocksWriteDeadline  = 0    // milliseconds
+	DefaultRemoteReadDeadline  = 5000 // milliseconds
+	DefaultRemoteWriteDeadline = 0    // milliseconds
 	DefaultSocks2RemoteBufLen  = 1024
 	DefaultRemote2SocksBufLen  = 4096
 )
