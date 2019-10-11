@@ -10,19 +10,55 @@ import (
 )
 
 const (
-	DefaultReadLen = 4096
+	DefaultSocksReadDeadline   = 2000
+	DefaultSocksWriteDeadline  = 0
+	DefaultRemoteReadDeadline  = 5000
+	DefaultRemoteWriteDeadline = 0
+	DefaultSocks2RemoteBufLen  = 1024
+	DefaultRemote2SocksBufLen  = 4096
 )
+
+type ServerConfig struct {
+	ListenAddr          string
+	SocksReadDeadline   int
+	SocksWriteDeadline  int
+	RemoteReadDeadline  int
+	RemoteWriteDeadline int
+	Socks2RemoteBuflen  int
+	Remote2SocksBuflen  int
+}
 
 type TcpServer struct {
 	listener *net.TCPListener
+	config   *ServerConfig
 }
 
-func NewTcpServer() *TcpServer {
-	return &TcpServer{}
+func NewTcpServer(config *ServerConfig) *TcpServer {
+	if config.SocksReadDeadline == 0 {
+		config.SocksReadDeadline = DefaultSocksReadDeadline
+	}
+	if config.SocksWriteDeadline == 0 {
+		config.SocksWriteDeadline = DefaultSocksWriteDeadline
+	}
+	if config.RemoteReadDeadline == 0 {
+		config.RemoteReadDeadline = DefaultRemoteReadDeadline
+	}
+	if config.RemoteWriteDeadline == 0 {
+		config.RemoteWriteDeadline = DefaultRemoteWriteDeadline
+	}
+	if config.Socks2RemoteBuflen == 0 {
+		config.Socks2RemoteBuflen = DefaultSocks2RemoteBufLen
+	}
+	if config.Remote2SocksBuflen == 0 {
+		config.Remote2SocksBuflen = DefaultRemote2SocksBufLen
+	}
+	return &TcpServer{
+		config: config,
+	}
 }
 
-func (t *TcpServer) Start(listen_addr string) error {
-	tcp_addr, err := net.ResolveTCPAddr("tcp", listen_addr)
+func (t *TcpServer) Start() error {
+	tcp_addr, err := net.ResolveTCPAddr("tcp", t.config.ListenAddr)
 	if err != nil {
 		fmt.Fprintln(os.Stdout, err.Error())
 		return err
@@ -45,14 +81,14 @@ func (t *TcpServer) Start(listen_addr string) error {
 			return err
 		}
 
-		go serve(c)
+		go t.serve(c)
 		fmt.Fprintln(os.Stdout, "new connection from client: ", c.RemoteAddr(), "->", c.LocalAddr())
 	}
 
 	return nil
 }
 
-func serve(conn *net.TCPConn) {
+func (t *TcpServer) serve(conn *net.TCPConn) {
 	var auth_req AuthRequest
 	err := auth_req.Read(conn)
 	if err != nil {
@@ -126,10 +162,10 @@ func serve(conn *net.TCPConn) {
 	c := make(chan struct{}, l)
 
 	// read from socks client and write to remote server
-	go read_write_loop(ctx, conn, remote_conn, 5000, 0, 1024, c)
+	go read_write_loop(ctx, conn, remote_conn, t.config.SocksReadDeadline, t.config.RemoteWriteDeadline, t.config.Socks2RemoteBuflen, c)
 
 	// read from remote server and write to socks client
-	go read_write_loop(ctx, remote_conn, conn, 5000, 0, 4096, c)
+	go read_write_loop(ctx, remote_conn, conn, t.config.RemoteReadDeadline, t.config.SocksWriteDeadline, t.config.Remote2SocksBuflen, c)
 
 	for i := 0; i < l; i++ {
 		<-c
