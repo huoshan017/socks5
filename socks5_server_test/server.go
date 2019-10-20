@@ -12,7 +12,8 @@ func main() {
 	flag.Parse()
 
 	server := socks5.NewTcpServer(&socks5.ServerConfig{
-		ListenAddr: *proxy_addr,
+		ListenAddr:        *proxy_addr,
+		SocksReadDeadline: 10000,
 	})
 	err := server.Start()
 	if err != nil {

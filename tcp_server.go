@@ -10,22 +10,24 @@ import (
 )
 
 const (
-	DefaultSocksReadDeadline   = 2000 // milliseconds
-	DefaultSocksWriteDeadline  = 0    // milliseconds
-	DefaultRemoteReadDeadline  = 5000 // milliseconds
-	DefaultRemoteWriteDeadline = 0    // milliseconds
-	DefaultSocks2RemoteBufLen  = 1024
-	DefaultRemote2SocksBufLen  = 4096
+	DefaultSocksReadDeadline     = 2000 // milliseconds
+	DefaultSocksWriteDeadline    = 0    // milliseconds
+	DefaultRemoteReadDeadline    = 5000 // milliseconds
+	DefaultRemoteWriteDeadline   = 0    // milliseconds
+	DefaultSocks2RemoteBufLen    = 1024
+	DefaultRemote2SocksBufLen    = 4096
+	DefaultReadWriteLoopInterval = 1 // milliseconds
 )
 
 type ServerConfig struct {
-	ListenAddr          string
-	SocksReadDeadline   int
-	SocksWriteDeadline  int
-	RemoteReadDeadline  int
-	RemoteWriteDeadline int
-	Socks2RemoteBuflen  int
-	Remote2SocksBuflen  int
+	ListenAddr            string
+	SocksReadDeadline     int
+	SocksWriteDeadline    int
+	RemoteReadDeadline    int
+	RemoteWriteDeadline   int
+	Socks2RemoteBuflen    int
+	Remote2SocksBuflen    int
+	ReadWriteLoopInterval int
 }
 
 type TcpServer struct {
@@ -51,6 +53,9 @@ func NewTcpServer(config *ServerConfig) *TcpServer {
 	}
 	if config.Remote2SocksBuflen == 0 {
 		config.Remote2SocksBuflen = DefaultRemote2SocksBufLen
+	}
+	if config.ReadWriteLoopInterval == 0 {
+		config.ReadWriteLoopInterval = DefaultReadWriteLoopInterval
 	}
 	return &TcpServer{
 		config: config,
@@ -162,10 +167,10 @@ func (t *TcpServer) serve(conn *net.TCPConn) {
 	c := make(chan struct{}, l)
 
 	// read from socks client and write to remote server
-	go read_write_loop(ctx, conn, remote_conn, t.config.SocksReadDeadline, t.config.RemoteWriteDeadline, t.config.Socks2RemoteBuflen, c)
+	go read_write_loop(ctx, conn, remote_conn, t.config.SocksReadDeadline, t.config.RemoteWriteDeadline, t.config.Socks2RemoteBuflen, c, t.config.ReadWriteLoopInterval)
 
 	// read from remote server and write to socks client
-	go read_write_loop(ctx, remote_conn, conn, t.config.RemoteReadDeadline, t.config.SocksWriteDeadline, t.config.Remote2SocksBuflen, c)
+	go read_write_loop(ctx, remote_conn, conn, t.config.RemoteReadDeadline, t.config.SocksWriteDeadline, t.config.Remote2SocksBuflen, c, t.config.ReadWriteLoopInterval)
 
 	for i := 0; i < l; i++ {
 		<-c
@@ -177,7 +182,7 @@ func (t *TcpServer) serve(conn *net.TCPConn) {
 	remote_conn.Close()
 }
 
-func read_write_loop(ctx context.Context, read_conn, write_conn net.Conn, read_deadline, write_deadline int, buf_len int, c chan struct{}) {
+func read_write_loop(ctx context.Context, read_conn, write_conn net.Conn, read_deadline, write_deadline int, buf_len int, c chan struct{}, read_write_interval int) {
 	defer func() {
 		c <- struct{}{}
 	}()
@@ -196,18 +201,28 @@ func read_write_loop(ctx context.Context, read_conn, write_conn net.Conn, read_d
 			write_conn.SetWriteDeadline(time.Now().Add(time.Millisecond * time.Duration(write_deadline)))
 		}
 		read_bytes, e := read_conn.Read(buf[:])
-		if e != nil {
-			if e != io.EOF {
-				fmt.Fprintln(os.Stdout, "read from socks client err: ", e.Error())
+		if e != nil && e != io.EOF {
+			if read_deadline > 0 {
+				ne := e.(net.Error)
+				if ne != nil && ne.Timeout() {
+					goto ReadWritePause
+				}
 			}
+			fmt.Fprintln(os.Stdout, "read from socks client err: ", e.Error())
 			break
 		}
 		_, e = write_conn.Write(buf[:read_bytes])
-		if e != nil {
-			if e != io.EOF {
-				fmt.Fprintln(os.Stdout, "write to remote server err: ", e.Error())
+		if e != nil && e != io.EOF {
+			if write_deadline > 0 {
+				ne := e.(net.Error)
+				if ne != nil && ne.Timeout() {
+					goto ReadWritePause
+				}
 			}
+			fmt.Fprintln(os.Stdout, "write to remote server err: ", e.Error())
 			break
 		}
+	ReadWritePause:
+		time.Sleep(time.Millisecond * time.Duration(read_write_interval))
 	}
 }
