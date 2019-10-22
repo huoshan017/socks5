@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"runtime"
 	"time"
 )
 
@@ -197,30 +198,37 @@ func read_write_loop(ctx context.Context, read_conn, write_conn net.Conn, read_d
 		if read_deadline > 0 {
 			read_conn.SetReadDeadline(time.Now().Add(time.Millisecond * time.Duration(read_deadline)))
 		}
-		if write_deadline > 0 {
+		/*if write_deadline > 0 {
 			write_conn.SetWriteDeadline(time.Now().Add(time.Millisecond * time.Duration(write_deadline)))
-		}
+		}*/
 		read_bytes, e := read_conn.Read(buf[:])
-		if e != nil && e != io.EOF {
-			if read_deadline > 0 {
-				ne := e.(net.Error)
-				if ne != nil && ne.Timeout() {
-					goto ReadWritePause
+		if e != nil {
+			if e != io.EOF {
+				if read_deadline > 0 {
+					ne, o := e.(net.Error)
+					if o && ne.Timeout() {
+						fmt.Fprintln(os.Stdout, "!!!!!!!!!!!!!!!!!!!!!!!!!! goroutines: ", runtime.NumGoroutine())
+						goto ReadWritePause
+					}
 				}
+				fmt.Fprintln(os.Stdout, "read from socks client err: ", e.Error())
 			}
-			fmt.Fprintln(os.Stdout, "read from socks client err: ", e.Error())
 			break
 		}
-		_, e = write_conn.Write(buf[:read_bytes])
-		if e != nil && e != io.EOF {
-			if write_deadline > 0 {
-				ne := e.(net.Error)
-				if ne != nil && ne.Timeout() {
-					goto ReadWritePause
+		if read_bytes > 0 {
+			_, e = write_conn.Write(buf[:read_bytes])
+			if e != nil {
+				/*if write_deadline > 0 {
+					ne := e.(net.Error)
+					if ne != nil && ne.Timeout() {
+						goto ReadWritePause
+					}
+				}*/
+				if e != io.EOF {
+					fmt.Fprintln(os.Stdout, "write to remote server err: ", e.Error())
 				}
+				break
 			}
-			fmt.Fprintln(os.Stdout, "write to remote server err: ", e.Error())
-			break
 		}
 	ReadWritePause:
 		time.Sleep(time.Millisecond * time.Duration(read_write_interval))
